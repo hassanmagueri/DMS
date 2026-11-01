@@ -1,0 +1,133 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model addresses {
+  id                                                  BigInt       @id @default(autoincrement())
+  street                                              String       @db.VarChar(255)
+  city                                                String       @db.VarChar(255)
+  state                                               String?      @db.VarChar(255)
+  postal_code                                         String?      @db.VarChar(255)
+  country                                             String       @db.VarChar(255)
+  latitude                                            Float?
+  longitude                                           Float?
+  deliveries_deliveries_dropoff_address_idToaddresses deliveries[] @relation("deliveries_dropoff_address_idToaddresses")
+  deliveries_deliveries_pickup_address_idToaddresses  deliveries[] @relation("deliveries_pickup_address_idToaddresses")
+}
+
+model deliveries {
+  id                                                 BigInt    @id @default(autoincrement())
+  customer_id                                        BigInt
+  driver_id                                          BigInt?
+  pickup_address_id                                  BigInt
+  dropoff_address_id                                 BigInt
+  weight                                             Float
+  status                                             String    @db.VarChar(255)
+  created_at                                         DateTime  @default(now()) @db.Timestamp(6)
+  delivered_at                                       DateTime? @db.Timestamp(6)
+  users                                              users     @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  drivers                                            drivers?  @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  addresses_deliveries_dropoff_address_idToaddresses addresses @relation("deliveries_dropoff_address_idToaddresses", fields: [dropoff_address_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  addresses_deliveries_pickup_address_idToaddresses  addresses @relation("deliveries_pickup_address_idToaddresses", fields: [pickup_address_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  delivery_events                                    delivery_events[]
+
+  @@index([created_at(sort: Desc)], map: "idx_deliveries_created_at")
+  @@index([customer_id], map: "idx_deliveries_customer_id")
+  @@index([driver_id], map: "idx_deliveries_driver_id")
+  @@index([status], map: "idx_deliveries_status")
+}
+
+model drivers {
+  id             BigInt       @id @default(autoincrement())
+  user_id        BigInt       @unique
+  license_number String       @unique @db.VarChar(255)
+  status         String       @db.VarChar(255)
+  deliveries     deliveries[]
+  users            users             @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vehicle          vehicle?
+  driver_locations driver_locations?
+
+  @@index([status], map: "idx_drivers_status")
+}
+
+model roles {
+  id          BigInt        @id @default(autoincrement())
+  name        String        @unique @db.VarChar(255)
+  users_roles users_roles[]
+}
+
+model tokens {
+  id                 BigInt    @id @default(autoincrement())
+  user_id            BigInt?
+  token              String?   @unique
+  revoked            Boolean?  @default(false)
+  created_at         DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  last_modified_date DateTime? @default(dbgenerated("CURRENT_DATE")) @db.Date
+  users              users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model users {
+  id          BigInt        @id @default(autoincrement())
+  username    String        @unique @db.VarChar(255)
+  email       String        @unique @db.VarChar(100)
+  phone       String        @unique @db.VarChar(20)
+  password    String        @db.VarChar(255)
+  first_name  String        @db.VarChar(255)
+  last_name   String        @db.VarChar(255)
+  role        String        @db.VarChar(255)
+  status      String        @db.VarChar(255)
+  enabled     Boolean       @default(true)
+  created_at  DateTime      @default(now()) @db.Timestamp(6)
+  updated_at  DateTime?     @default(now()) @db.Timestamp(6)
+  deliveries      deliveries[]
+  drivers         drivers?
+  tokens          tokens[]
+  users_roles     users_roles[]
+  delivery_events delivery_events[]
+}
+
+model users_roles {
+  role_id BigInt
+  user_id BigInt
+  roles   roles  @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users   users  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([role_id, user_id])
+}
+
+model delivery_events {
+  id          BigInt     @id @default(autoincrement())
+  delivery_id BigInt
+  actor_id    BigInt?
+  from_status String?    @db.VarChar(255)
+  to_status   String     @db.VarChar(255)
+  note        String?    @db.VarChar(500)
+  created_at  DateTime   @default(now()) @db.Timestamp(6)
+  deliveries  deliveries @relation(fields: [delivery_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users       users?     @relation(fields: [actor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([delivery_id], map: "idx_delivery_events_delivery_id")
+}
+
+model driver_locations {
+  driver_id  BigInt   @id
+  latitude   Float
+  longitude  Float
+  updated_at DateTime @default(now()) @db.Timestamp(6)
+  drivers    drivers  @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model vehicle {
+  id           BigInt   @id @default(autoincrement())
+  driver_id    BigInt?  @unique
+  brand        String   @db.VarChar(255)
+  model        String   @db.VarChar(255)
+  plate_number String   @db.VarChar(255)
+  type         String   @db.VarChar(255)
+  drivers      drivers? @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}

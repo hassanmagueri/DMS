@@ -1,0 +1,11 @@
+{
+  "name": "delivery-management",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w api",
+    "dev:web": "npm run dev -w web"
+  }
+}
