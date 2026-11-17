@@ -6,6 +6,7 @@ declare global {
         role: string;
         token: string;
       };
+      rawBody?: Buffer;
     }
   }
 }

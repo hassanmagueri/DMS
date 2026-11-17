@@ -11,7 +11,7 @@ const createSchema = z.object({
   firstName: z.string().trim().min(1).max(255),
   lastName: z.string().trim().min(1).max(255),
   username: z.string().trim().min(3).max(255).regex(/^[a-zA-Z0-9_]+$/),
-  email: z.string().trim().email().max(100),
+  email: z.union([z.string().trim().email().max(100), z.literal("")]).optional(),
   phone: z.string().trim().min(6).max(20),
   password: z.string().min(8).max(72),
 });

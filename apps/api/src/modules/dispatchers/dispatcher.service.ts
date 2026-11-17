@@ -9,7 +9,7 @@ function toDispatcher(user: {
   username: string;
   first_name: string;
   last_name: string;
-  email: string;
+  email: string | null;
   phone: string;
   status: string;
   enabled: boolean;
@@ -38,7 +38,7 @@ export async function createDispatcher(input: {
   firstName: string;
   lastName: string;
   username: string;
-  email: string;
+  email?: string | null;
   phone: string;
   password: string;
 }) {
@@ -79,6 +79,9 @@ export async function updateDispatcher(
         updated_at: new Date(),
       },
     });
+    if (input.enabled === false) {
+      await prisma.tokens.updateMany({ where: { user_id: id }, data: { revoked: true } });
+    }
     return toDispatcher(user);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -95,7 +98,9 @@ export async function deleteDispatcher(id: bigint, actorId: bigint) {
 
   await prisma.$transaction(async (tx) => {
     await tx.delivery_events.updateMany({ where: { actor_id: id }, data: { actor_id: null } });
+    await tx.refunds.updateMany({ where: { actor_id: id }, data: { actor_id: null } });
     await tx.tokens.deleteMany({ where: { user_id: id } });
+    await tx.users_roles.deleteMany({ where: { user_id: id } });
     await tx.users.delete({ where: { id } });
   });
 }

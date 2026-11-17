@@ -2,9 +2,7 @@ import { Button } from "@/components/ui/button";
 
 export function LoadingBlock({ label = "Loading..." }: { label?: string }) {
   return (
-    <div className="rounded-xl border border-dashed px-4 py-12 text-center text-sm text-muted-foreground">
-      {label}
-    </div>
+    <div className="rounded-xl border bg-card px-4 py-12 text-center text-sm text-muted-foreground">{label}</div>
   );
 }
 

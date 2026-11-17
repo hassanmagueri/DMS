@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useConfirm } from "@/components/confirm-dialog";
+import { PageHeader } from "@/components/page-header";
 import { EmptyBlock, ErrorBlock, LoadingBlock } from "@/components/page-state";
+import { useAuth } from "@/components/providers";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,19 +27,21 @@ import {
 } from "@/components/ui/table";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
-import { canAssign, formatWhen, personName, statusLabel } from "@/lib/format";
-import type { DeliveryPage, Driver } from "@/types/domain";
+import { canAssign, formatWhen, personName } from "@/lib/format";
+import { deliveryPayLabel } from "@/types/payment";
+import type { DeliveryPage } from "@/types/domain";
 
 const statuses = ["ALL", "PENDING", "ASSIGNED", "ACCEPTED", "REJECTED", "PICKED_UP", "IN_TRANSIT", "DELIVERED", "FAILED", "CANCELLED"];
 
 export default function DeliveriesPage() {
+  const confirm = useConfirm();
+  const router = useRouter();
+  const { user } = useAuth();
+  const canManage = user?.role === "ADMIN";
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("ALL");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<DeliveryPage | null>(null);
-  const [drivers, setDrivers] = useState<Driver[]>([]);
-  const [picked, setPicked] = useState<Record<number, string>>({});
-  const [assigningId, setAssigningId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -55,41 +61,24 @@ export default function DeliveriesPage() {
   }
 
   useEffect(() => {
-    load(1, "ALL", "");
-    api<Driver[]>("/api/drivers")
-      .then(setDrivers)
-      .catch(() => setDrivers([]));
+    const params = new URLSearchParams(window.location.search);
+    const initial = params.get("q") ?? "";
+    const requested = params.get("status") ?? "ALL";
+    const initialStatus = statuses.includes(requested) ? requested : "ALL";
+    setQuery(initial);
+    setStatus(initialStatus);
+    load(1, initialStatus, initial);
     // Initial load only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const available = drivers.filter((driver) => driver.user.enabled && driver.status !== "OFFLINE");
-
-  async function assign(deliveryId: number) {
-    const driverId = picked[deliveryId];
-    if (!driverId) return;
-    setAssigningId(deliveryId);
-    try {
-      await api(`/api/deliveries/${deliveryId}/assign`, {
-        method: "POST",
-        body: JSON.stringify({ driverId: Number(driverId) }),
-      });
-      toast.success("Driver assigned");
-      setPicked((current) => {
-        const next = { ...current };
-        delete next[deliveryId];
-        return next;
-      });
-      load();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not assign the driver");
-    } finally {
-      setAssigningId(null);
-    }
-  }
-
   async function remove(id: number) {
-    if (!window.confirm(`Delete delivery #${id}? This cannot be undone.`)) return;
+    const accepted = await confirm({
+      title: `Delete delivery #${id}?`,
+      body: "This removes the delivery and its history. The action cannot be undone.",
+      confirmLabel: "Delete delivery",
+    });
+    if (!accepted) return;
     try {
       await api(`/api/deliveries/${id}`, { method: "DELETE" });
       toast.success(`Delivery #${id} deleted`);
@@ -103,17 +92,15 @@ export default function DeliveriesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-semibold">Deliveries</h2>
-          <p className="text-sm text-muted-foreground">
-            Assign a pending or rejected delivery to an available driver. The driver accepts or rejects it.
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/deliveries/new">New delivery</Link>
-        </Button>
-      </div>
+      <PageHeader
+        title="Deliveries"
+        description="Search the queue and assign a driver. A delivery moves even when pay on delivery is not confirmed yet."
+        action={
+          <Button asChild>
+            <Link href="/deliveries/new">New delivery</Link>
+          </Button>
+        }
+      />
       <form
         className="flex flex-col gap-2 sm:flex-row"
         onSubmit={(event) => {
@@ -157,6 +144,7 @@ export default function DeliveriesPage() {
       ) : null}
       {!loading && !error && data && data.items.length > 0 ? (
         <>
+          <div className="overflow-hidden rounded-xl border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -165,70 +153,68 @@ export default function DeliveriesPage() {
                 <TableHead>Route</TableHead>
                 <TableHead>Driver</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Pay</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead></TableHead>
+                {canManage ? <TableHead></TableHead> : null}
               </TableRow>
             </TableHeader>
             <TableBody>
               {data.items.map((delivery) => (
-                <TableRow key={delivery.id}>
-                  <TableCell>
-                    <Link className="font-medium text-primary" href={`/deliveries/${delivery.id}`}>
-                      #{delivery.id}
-                    </Link>
-                  </TableCell>
+                <TableRow
+                  key={delivery.id}
+                  className="cursor-pointer"
+                  onClick={() => router.push(`/deliveries/${delivery.id}`)}
+                >
+                  <TableCell className="font-medium text-primary">#{delivery.id}</TableCell>
                   <TableCell>{personName(delivery.customer)}</TableCell>
                   <TableCell>
                     {delivery.pickup.city} → {delivery.dropoff.city}
                   </TableCell>
                   <TableCell>
+                    <div>{delivery.driver ? personName(delivery.driver) : "Unassigned"}</div>
                     {canAssign(delivery.status) ? (
-                      <div className="flex min-w-64 flex-col gap-2 sm:flex-row">
-                        <Select
-                          value={picked[delivery.id] || (delivery.driver ? String(delivery.driver.id) : undefined)}
-                          onValueChange={(value) => setPicked((current) => ({ ...current, [delivery.id]: value }))}
-                        >
-                          <SelectTrigger className="w-full sm:w-52">
-                            <SelectValue placeholder="Choose a driver" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {available.map((driver) => (
-                              <SelectItem key={driver.id} value={String(driver.id)}>
-                                {personName(driver.user)} · {statusLabel(driver.status)}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          disabled={
-                            assigningId === delivery.id ||
-                            !picked[delivery.id] ||
-                            picked[delivery.id] === String(delivery.driver?.id ?? "")
-                          }
-                          onClick={() => assign(delivery.id)}
-                        >
-                          Assign
-                        </Button>
-                      </div>
-                    ) : delivery.driver ? (
-                      personName(delivery.driver)
-                    ) : (
-                      "Unassigned"
-                    )}
+                      <Link
+                        className="text-xs text-primary"
+                        href={`/deliveries/${delivery.id}`}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        Choose driver
+                      </Link>
+                    ) : null}
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={delivery.status} />
                   </TableCell>
-                  <TableCell>{formatWhen(delivery.createdAt)}</TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="destructive" onClick={() => remove(delivery.id)}>
-                      Delete
-                    </Button>
+                  <TableCell>
+                    <StatusBadge
+                      status={delivery.payment?.status ?? "PENDING"}
+                      label={deliveryPayLabel(delivery.payment)}
+                    />
+                    {delivery.payment ? (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {delivery.payment.amount} {delivery.payment.currency}
+                      </div>
+                    ) : null}
                   </TableCell>
+                  <TableCell>{formatWhen(delivery.createdAt)}</TableCell>
+                  {canManage ? (
+                    <TableCell className="text-right">
+                      <Button
+                        variant="destructive"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          remove(delivery.id);
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </TableCell>
+                  ) : null}
                 </TableRow>
               ))}
             </TableBody>
           </Table>
+          </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">
               Page {data.page} of {totalPages} · {data.total} deliveries

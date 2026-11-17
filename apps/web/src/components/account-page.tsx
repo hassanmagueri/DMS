@@ -1,31 +1,29 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useAuth } from "@/components/providers";
-import { personName } from "@/lib/format";
+import { useEffect, useState } from "react";
+import { ProfileView } from "@/components/profile-view";
+import { ErrorBlock, LoadingBlock } from "@/components/page-state";
+import { api } from "@/lib/api";
+import type { PersonProfile } from "@/types/profile";
 
 export default function AccountPage() {
-  const { user } = useAuth();
-  if (!user) return null;
+  const [profile, setProfile] = useState<PersonProfile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  return (
-    <div className="mx-auto max-w-lg space-y-4">
-      <div>
-        <h2 className="text-2xl font-semibold">{personName(user)}</h2>
-        <p className="text-sm text-muted-foreground">Signed in with a JWT stored for this browser session.</p>
-      </div>
-      <Card>
-        <CardHeader>
-          <CardTitle>Profile</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-1 text-sm">
-          <p>Username: {user.username}</p>
-          <p>Email: {user.email}</p>
-          <p>Phone: {user.phone}</p>
-          <p>Role: {user.role}</p>
-          <p>Status: {user.status}</p>
-        </CardContent>
-      </Card>
-    </div>
-  );
+  function load() {
+    setLoading(true);
+    api<PersonProfile>("/api/profiles/me")
+      .then(setProfile)
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  if (loading) return <LoadingBlock label="Loading your profile..." />;
+  if (error || !profile) return <ErrorBlock message={error ?? "Could not load your profile"} onRetry={load} />;
+  return <ProfileView profile={profile} />;
 }

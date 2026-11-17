@@ -3,6 +3,7 @@ import { statusLabel } from "@/lib/format";
 
 const styles: Record<string, string> = {
   PENDING: "border-amber-200 bg-amber-50 text-amber-800",
+  LATE: "border-red-200 bg-red-50 text-red-800",
   ASSIGNED: "border-blue-200 bg-blue-50 text-blue-800",
   ACCEPTED: "border-indigo-200 bg-indigo-50 text-indigo-800",
   REJECTED: "border-orange-200 bg-orange-50 text-orange-800",
@@ -15,12 +16,20 @@ const styles: Record<string, string> = {
   ON_DELIVERY: "border-sky-200 bg-sky-50 text-sky-800",
   OFFLINE: "border-zinc-200 bg-zinc-100 text-zinc-700",
   ACTIVE: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  UNCONFIRMED: "border-zinc-200 bg-zinc-100 text-zinc-700",
+  BLOCKED: "border-red-200 bg-red-50 text-red-800",
+  DISABLED: "border-red-200 bg-red-50 text-red-800",
+  PROCESSING: "border-blue-200 bg-blue-50 text-blue-800",
+  REQUIRES_ACTION: "border-amber-200 bg-amber-50 text-amber-800",
+  SUCCEEDED: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  PARTIALLY_REFUNDED: "border-orange-200 bg-orange-50 text-orange-800",
+  REFUNDED: "border-zinc-200 bg-zinc-100 text-zinc-700",
 };
 
-export function StatusBadge({ status }: { status: string }) {
+export function StatusBadge({ status, label }: { status: string; label?: string }) {
   return (
     <Badge variant="outline" className={styles[status] ?? ""}>
-      {statusLabel(status)}
+      {label ?? statusLabel(status)}
     </Badge>
   );
 }

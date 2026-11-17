@@ -3,16 +3,20 @@ import { prisma } from "../../lib/prisma";
 import { asyncHandler } from "../../middleware/asyncHandler";
 import { OPERATOR_ROLES, requireAuth, requireRoles } from "../../middleware/auth";
 import { DELIVERY_STATUSES } from "../deliveries/delivery.schema";
-import { toDelivery } from "../deliveries/delivery.service";
+import { deliveryListInclude, toDelivery } from "../deliveries/delivery.service";
+import { syncAllDriverPresence } from "../drivers/presence";
 
 const router = Router();
+
+const PENDING_LIMIT = 40;
 
 router.use(requireAuth, requireRoles(...OPERATOR_ROLES));
 
 router.get(
   "/summary",
   asyncHandler(async (_req, res) => {
-    const [deliveryGroups, driverGroups, dispatcherCount, customerCount, recent, activities] = await Promise.all([
+    await syncAllDriverPresence();
+    const [deliveryGroups, driverGroups, dispatcherCount, customerCount, recent, pending, activities] = await Promise.all([
       prisma.deliveries.groupBy({ by: ["status"], _count: { _all: true } }),
       prisma.drivers.groupBy({ by: ["status"], _count: { _all: true } }),
       prisma.users.count({ where: { role: "DISPATCHER" } }),
@@ -20,21 +24,13 @@ router.get(
       prisma.deliveries.findMany({
         take: 5,
         orderBy: { created_at: "desc" },
-        include: {
-          users: { select: { id: true, first_name: true, last_name: true, email: true, phone: true } },
-          drivers: {
-            include: {
-              users: { select: { id: true, first_name: true, last_name: true, email: true, phone: true } },
-              driver_locations: true,
-            },
-          },
-          addresses_deliveries_pickup_address_idToaddresses: true,
-          addresses_deliveries_dropoff_address_idToaddresses: true,
-          delivery_events: {
-            orderBy: { created_at: "asc" },
-            include: { users: { select: { first_name: true, last_name: true } } },
-          },
-        },
+        include: deliveryListInclude,
+      }),
+      prisma.deliveries.findMany({
+        where: { status: "PENDING" },
+        orderBy: { created_at: "asc" },
+        include: deliveryListInclude,
+        take: PENDING_LIMIT,
       }),
       prisma.delivery_events.findMany({
         take: 8,
@@ -72,6 +68,7 @@ router.get(
       },
       byStatus: DELIVERY_STATUSES.map((status) => ({ status, count: countOf(status) })),
       recent: recent.map((row) => toDelivery(row, "ADMIN")),
+      pending: pending.map((row) => toDelivery(row, "ADMIN")),
       activities: activities.map((event) => ({
         id: Number(event.id),
         deliveryId: Number(event.delivery_id),

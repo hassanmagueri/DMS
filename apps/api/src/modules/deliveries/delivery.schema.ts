@@ -37,8 +37,27 @@ export const assignDriverSchema = z.object({
 
 export const DETAIL_EDITABLE = ["PENDING", "ASSIGNED", "ACCEPTED", "REJECTED"] as const;
 
+export const FAILURE_REASONS = ["NOBODY_HOME", "WRONG_ADDRESS", "REFUSED", "UNREACHABLE"] as const;
+
+export const failureReasonLabels: Record<(typeof FAILURE_REASONS)[number], string> = {
+  NOBODY_HOME: "Nobody home",
+  WRONG_ADDRESS: "Wrong address",
+  REFUSED: "Customer refused",
+  UNREACHABLE: "Could not reach the address",
+};
+
 export const updateStatusSchema = z.object({
   status: z.enum(DELIVERY_STATUSES),
+  confirmationCode: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "Enter the 6-digit code from the customer")
+    .optional(),
+  failureReason: z.enum(FAILURE_REASONS).optional(),
+});
+
+export const ratingSchema = z.object({
+  score: z.number().int().min(1).max(5),
 });
 
 export const locationSchema = z.object({
@@ -54,7 +73,7 @@ const operatorTransitions: Record<DeliveryStatus, DeliveryStatus[]> = {
   PICKED_UP: ["IN_TRANSIT", "FAILED"],
   IN_TRANSIT: ["DELIVERED", "FAILED"],
   DELIVERED: [],
-  FAILED: [],
+  FAILED: ["PENDING"],
   CANCELLED: [],
 };
 
@@ -63,8 +82,8 @@ const driverTransitions: Record<DeliveryStatus, DeliveryStatus[]> = {
   ASSIGNED: [],
   ACCEPTED: ["PICKED_UP"],
   REJECTED: [],
-  PICKED_UP: ["IN_TRANSIT"],
-  IN_TRANSIT: ["DELIVERED"],
+  PICKED_UP: ["IN_TRANSIT", "FAILED"],
+  IN_TRANSIT: ["DELIVERED", "FAILED"],
   DELIVERED: [],
   FAILED: [],
   CANCELLED: [],

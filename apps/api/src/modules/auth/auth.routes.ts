@@ -2,13 +2,26 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../../middleware/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
-import { currentUser, login, logout, register } from "./auth.service";
+import {
+  beginEmailLink,
+  completePasswordSetup,
+  currentUser,
+  login,
+  logout,
+  register,
+  verifyLoginSetup,
+  verifyRegister,
+} from "./auth.service";
 
 const router = Router();
 
 const loginSchema = z.object({
-  email: z.string().trim().email("Enter a valid email"),
+  username: z.string().trim().min(1, "Enter your username").max(255),
   password: z.string().min(1, "Password is required"),
+});
+
+const linkSchema = loginSchema.extend({
+  address: z.string().trim().email("Enter a valid email").max(100),
 });
 
 const registerSchema = z.object({
@@ -33,11 +46,58 @@ router.post(
   }),
 );
 
+const verifySchema = z.object({
+  username: z.string().trim().min(1, "Enter your username").max(255),
+  code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code"),
+});
+
+const verifyLoginSchema = z.object({
+  username: z.string().trim().min(1, "Enter your username").max(255),
+  code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code"),
+});
+
+const passwordSetupSchema = z.object({
+  setupToken: z.string().min(1),
+  password: z.string().min(8, "Password must be at least 8 characters").max(72),
+});
+
 router.post(
   "/login",
   asyncHandler(async (req, res) => {
     const body = loginSchema.parse(req.body);
-    res.json(await login(body.email, body.password));
+    res.json(await login(body.username, body.password));
+  }),
+);
+
+router.post(
+  "/login/link",
+  asyncHandler(async (req, res) => {
+    const body = linkSchema.parse(req.body);
+    res.json(await beginEmailLink(body.username, body.password, body.address));
+  }),
+);
+
+router.post(
+  "/login/verify",
+  asyncHandler(async (req, res) => {
+    const body = verifyLoginSchema.parse(req.body);
+    res.json(await verifyLoginSetup(body.username, body.code));
+  }),
+);
+
+router.post(
+  "/login/password",
+  asyncHandler(async (req, res) => {
+    const body = passwordSetupSchema.parse(req.body);
+    res.json(await completePasswordSetup(body.setupToken, body.password));
+  }),
+);
+
+router.post(
+  "/register/verify",
+  asyncHandler(async (req, res) => {
+    const body = verifySchema.parse(req.body);
+    res.json(await verifyRegister(body.username, body.code));
   }),
 );
 

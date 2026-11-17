@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { PageHeader } from "@/components/page-header";
 import { ErrorBlock, LoadingBlock } from "@/components/page-state";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -17,16 +18,17 @@ export default function CustomerHomePage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  function load() {
+  function load(nextPage = 1) {
     setLoading(true);
-    api<DeliveryPage>("/api/deliveries/mine?page=1&pageSize=50")
+    api<DeliveryPage>(`/api/deliveries/mine?page=${nextPage}&pageSize=20`)
       .then(setData)
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
   }
 
   useEffect(() => {
-    load();
+    load(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (loading) return <LoadingBlock />;
@@ -38,15 +40,15 @@ export default function CustomerHomePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-semibold">My deliveries</h2>
-          <p className="text-sm text-muted-foreground">Only your own requests are shown here.</p>
-        </div>
-        <Button asChild>
-          <Link href="/customer/new">Create delivery</Link>
-        </Button>
-      </div>
+      <PageHeader
+        title="Deliveries"
+        description="Requests you have submitted."
+        action={
+          <Button asChild>
+            <Link href="/customer/new">New request</Link>
+          </Button>
+        }
+      />
       <div className="grid gap-3 sm:grid-cols-4">
         {[
           ["Total", data.total],
@@ -83,6 +85,33 @@ export default function CustomerHomePage() {
           ))
         )}
       </div>
+      {data.total > data.pageSize ? (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">
+            Page {data.page} of {Math.max(1, Math.ceil(data.total / data.pageSize))} · {data.total} deliveries
+          </span>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              disabled={data.page <= 1}
+              onClick={() => {
+                load(data.page - 1);
+              }}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              disabled={data.page * data.pageSize >= data.total}
+              onClick={() => {
+                load(data.page + 1);
+              }}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

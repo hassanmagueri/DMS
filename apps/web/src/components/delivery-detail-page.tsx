@@ -1,24 +1,24 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { useConfirm } from "@/components/confirm-dialog";
 import { ErrorBlock, LoadingBlock } from "@/components/page-state";
+import { ConfirmDeliveryForm } from "@/components/delivery-proof";
+import { FailDeliveryForm } from "@/components/fail-delivery-form";
+import { useAuth } from "@/components/providers";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { api, ApiError } from "@/lib/api";
-import { allowedActions, canAssign, canEditDetails, formatAddress, formatWhen, personName, statusLabel } from "@/lib/format";
-import type { Delivery, Driver } from "@/types/domain";
+import { StarRating } from "@/components/star-rating";
+import { allowedActions, canAssign, canEditDetails, failureReasonLabel, formatAddress, formatWhen, personName, statusLabel } from "@/lib/format";
+import { deliveryPayLabel } from "@/types/payment";
+import type { Delivery, Driver, DriverPage } from "@/types/domain";
 
 type AddressDraft = {
   street: string;
@@ -81,10 +81,14 @@ function draftAddress(address: Delivery["pickup"]): AddressDraft {
 }
 
 export default function DeliveryDetailPage() {
+  const confirm = useConfirm();
+  const { user } = useAuth();
+  const canManage = user?.role === "ADMIN";
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [delivery, setDelivery] = useState<Delivery | null>(null);
   const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [driverQuery, setDriverQuery] = useState("");
   const [driverId, setDriverId] = useState("");
   const [weight, setWeight] = useState("");
   const [pickup, setPickup] = useState<AddressDraft>({ street: "", city: "", state: "", postalCode: "", country: "" });
@@ -96,10 +100,9 @@ export default function DeliveryDetailPage() {
   function load() {
     setLoading(true);
     setError(null);
-    Promise.all([api<Delivery>(`/api/deliveries/${params.id}`), api<Driver[]>("/api/drivers")])
-      .then(([row, driverRows]) => {
+    api<Delivery>(`/api/deliveries/${params.id}`)
+      .then((row) => {
         setDelivery(row);
-        setDrivers(driverRows);
         setDriverId(row.driver ? String(row.driver.id) : "");
         setWeight(String(row.weight));
         setPickup(draftAddress(row.pickup));
@@ -113,6 +116,17 @@ export default function DeliveryDetailPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      const params = new URLSearchParams({ page: "1", pageSize: "20", assignable: "1" });
+      if (driverQuery.trim()) params.set("q", driverQuery.trim());
+      api<DriverPage>(`/api/drivers?${params.toString()}`)
+        .then((data) => setDrivers(data.items))
+        .catch(() => setDrivers([]));
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [driverQuery]);
 
   async function assign() {
     if (!delivery || !driverId) return;
@@ -150,7 +164,13 @@ export default function DeliveryDetailPage() {
   }
 
   async function remove() {
-    if (!delivery || !window.confirm(`Delete delivery #${delivery.id}? This cannot be undone.`)) return;
+    if (!delivery) return;
+    const accepted = await confirm({
+      title: `Delete delivery #${delivery.id}?`,
+      body: "This removes the delivery and its history.",
+      confirmLabel: "Delete delivery",
+    });
+    if (!accepted) return;
     setBusy(true);
     try {
       await api(`/api/deliveries/${delivery.id}`, { method: "DELETE" });
@@ -162,14 +182,21 @@ export default function DeliveryDetailPage() {
     }
   }
 
-  async function changeStatus(status: string) {
+  async function changeStatus(status: string, confirmationCode?: string, failureReason?: string) {
     if (!delivery) return;
-    if (status === "CANCELLED" && !window.confirm("Cancel this delivery?")) return;
+    if (status === "CANCELLED") {
+      const accepted = await confirm({
+        title: "Cancel this delivery?",
+        body: "The delivery leaves the active queue.",
+        confirmLabel: "Cancel delivery",
+      });
+      if (!accepted) return;
+    }
     setBusy(true);
     try {
       const updated = await api<Delivery>(`/api/deliveries/${delivery.id}/status`, {
         method: "POST",
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, confirmationCode, failureReason }),
       });
       setDelivery(updated);
       toast.success(`Status is now ${statusLabel(status)}`);
@@ -197,9 +224,11 @@ export default function DeliveryDetailPage() {
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge status={delivery.status} />
-          <Button variant="destructive" disabled={busy} onClick={remove}>
-            Delete
-          </Button>
+          {canManage ? (
+            <Button variant="destructive" disabled={busy} onClick={remove}>
+              Delete
+            </Button>
+          ) : null}
         </div>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
@@ -208,10 +237,28 @@ export default function DeliveryDetailPage() {
             <CardTitle>Customer</CardTitle>
           </CardHeader>
           <CardContent className="space-y-1 text-sm">
-            <p className="font-medium">{personName(delivery.customer)}</p>
+            <p className="font-medium">
+              <Link className="text-primary" href={`/people/${delivery.customer.id}`}>
+                {personName(delivery.customer)}
+              </Link>
+            </p>
             <p>{delivery.customer.email}</p>
             <p>{delivery.customer.phone}</p>
             <p className="pt-2 text-muted-foreground">Weight {delivery.weight} kg</p>
+            <div className="flex flex-wrap items-center gap-2 pt-2">
+              <span className="text-muted-foreground">Pay</span>
+              <StatusBadge
+                status={delivery.payment?.status ?? "PENDING"}
+                label={deliveryPayLabel(delivery.payment)}
+              />
+              {delivery.payment ? (
+                <span>
+                  {delivery.payment.amount} {delivery.payment.currency}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">Pay the driver in cash when the parcel arrives.</span>
+              )}
+            </div>
             {delivery.deliveredAt ? <p>Delivered {formatWhen(delivery.deliveredAt)}</p> : null}
           </CardContent>
         </Card>
@@ -231,7 +278,57 @@ export default function DeliveryDetailPage() {
           </CardContent>
         </Card>
       </div>
-      {canEditDetails(delivery.status) ? (
+      {canAssign(delivery.status) ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Choose a driver</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {delivery.driver
+                ? `Currently assigned to ${personName(delivery.driver)}. Pick another driver to reassign.`
+                : "This delivery is waiting for a driver. The driver must accept the assignment."}
+            </p>
+            <Input value={driverQuery} onChange={(event) => setDriverQuery(event.target.value)} placeholder="Search drivers by name, email, or license" />
+            {choices.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No available drivers.</p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {choices.map((driver) => {
+                  const selected = driverId === String(driver.id);
+                  return (
+                    <button
+                      key={driver.id}
+                      type="button"
+                      onClick={() => setDriverId(String(driver.id))}
+                      className={`rounded-xl border p-3 text-left transition-colors ${
+                        selected ? "border-primary bg-primary/5" : "hover:bg-muted/50"
+                      }`}
+                    >
+                      <span className="block font-medium">{personName(driver.user)}</span>
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        {driver.licenseNumber} · {statusLabel(driver.status)}
+                      </span>
+                      <span className="mt-1 block">
+                        <StarRating value={driver.ratingAverage} count={driver.ratingCount} />
+                      </span>
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        {driver.vehicle
+                          ? `${driver.vehicle.brand} ${driver.vehicle.model} · ${driver.vehicle.plateNumber}`
+                          : "No vehicle"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <Button onClick={assign} disabled={busy || !driverId || driverId === String(delivery.driver?.id ?? "")}>
+              {delivery.driver ? "Reassign driver" : "Assign driver"}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+      {canManage && canEditDetails(delivery.status) ? (
         <Card>
           <CardHeader>
             <CardTitle>Edit delivery</CardTitle>
@@ -253,49 +350,47 @@ export default function DeliveryDetailPage() {
       ) : null}
       <Card>
         <CardHeader>
-          <CardTitle>Assignment and status</CardTitle>
+          <CardTitle>Status</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-3">
           <p className="text-sm">
-            Driver: {delivery.driver ? `${personName(delivery.driver)} · ${delivery.driver.licenseNumber}` : "Unassigned"}
+            Driver:{" "}
+            {delivery.driver ? (
+              <Link className="text-primary" href={`/people/${delivery.driver.userId}`}>
+                {personName(delivery.driver)} · {delivery.driver.licenseNumber}
+              </Link>
+            ) : (
+              "Unassigned"
+            )}
           </p>
-          {canAssign(delivery.status) ? (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Choose an available driver. The driver must accept the assignment.</p>
-              {choices.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No available drivers.</p>
-              ) : (
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Select value={driverId || undefined} onValueChange={setDriverId}>
-                    <SelectTrigger className="sm:w-80">
-                      <SelectValue placeholder="Choose a driver" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {choices.map((driver) => (
-                        <SelectItem key={driver.id} value={String(driver.id)}>
-                          {personName(driver.user)} · {statusLabel(driver.status)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button onClick={assign} disabled={busy || !driverId}>
-                    Assign driver
-                  </Button>
-                </div>
-              )}
-            </div>
+          {delivery.proof.confirmedAt ? (
+            <p className="text-sm text-muted-foreground">
+              Proof of delivery confirmed {formatWhen(delivery.proof.confirmedAt)}
+              {delivery.proof.confirmedBy ? ` by ${delivery.proof.confirmedBy}` : ""}.
+            </p>
           ) : null}
-          <div className="flex flex-wrap gap-2">
-            {actions.map((status) => (
+          {delivery.failureReason ? (
+            <p className="text-sm">Last failure: {failureReasonLabel(delivery.failureReason)}</p>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {actions
+              .filter((status) => status !== "DELIVERED" && status !== "FAILED")
+              .map((status) => (
               <Button
                 key={status}
-                variant={status === "CANCELLED" || status === "FAILED" ? "destructive" : "default"}
+                variant={status === "CANCELLED" ? "destructive" : "default"}
                 disabled={busy}
                 onClick={() => changeStatus(status)}
               >
-                Mark {statusLabel(status)}
+                {status === "PENDING" ? "Send again" : `Mark ${statusLabel(status)}`}
               </Button>
             ))}
+            {actions.includes("FAILED") ? (
+              <FailDeliveryForm busy={busy} onConfirm={(reason) => changeStatus("FAILED", undefined, reason)} />
+            ) : null}
+            {actions.includes("DELIVERED") ? (
+              <ConfirmDeliveryForm busy={busy} onConfirm={(code) => changeStatus("DELIVERED", code)} />
+            ) : null}
             {actions.length === 0 ? (
               <p className="text-sm text-muted-foreground">This delivery cannot move to another status.</p>
             ) : null}

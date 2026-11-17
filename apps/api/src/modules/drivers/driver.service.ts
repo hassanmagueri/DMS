@@ -4,31 +4,36 @@ import { prisma } from "../../lib/prisma";
 import { AppError } from "../../lib/errors";
 import { listDeliveries } from "../deliveries/delivery.service";
 import { createStaffAccount } from "../users/account.service";
+import { syncAllDriverPresence, syncDriverPresence } from "./presence";
 
 const ACTIVE = ["ASSIGNED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"];
 
-function toDriver(row: {
-  id: bigint;
-  license_number: string;
-  status: string;
-  users: {
+function toDriver(
+  row: {
     id: bigint;
-    first_name: string;
-    last_name: string;
-    email: string;
-    phone: string;
-    username: string;
-    enabled: boolean;
-  };
-  vehicle: { id: bigint; brand: string; model: string; plate_number: string; type: string } | null;
-  deliveries: { status: string }[];
-}) {
+    license_number: string;
+    status: string;
+    users: {
+      id: bigint;
+      first_name: string;
+      last_name: string;
+      email: string | null;
+      phone: string;
+      username: string;
+      enabled: boolean;
+    };
+    vehicle: { id: bigint; brand: string; model: string; plate_number: string; type: string } | null;
+  },
+  stats: { active: number; completed: number; ratingAverage: number | null; ratingCount: number },
+) {
   return {
     id: Number(row.id),
     licenseNumber: row.license_number,
     status: row.status,
-    activeDeliveries: row.deliveries.filter((item) => ACTIVE.includes(item.status)).length,
-    completedDeliveries: row.deliveries.filter((item) => item.status === "DELIVERED").length,
+    activeDeliveries: stats.active,
+    completedDeliveries: stats.completed,
+    ratingAverage: stats.ratingAverage,
+    ratingCount: stats.ratingCount,
     user: {
       id: Number(row.users.id),
       firstName: row.users.first_name,
@@ -63,15 +68,97 @@ const driverInclude = {
     },
   },
   vehicle: true,
-  deliveries: { select: { status: true } },
 } as const;
 
-export async function listDrivers() {
-  const rows = await prisma.drivers.findMany({
-    include: driverInclude,
-    orderBy: { id: "asc" },
+type DriverRow = Prisma.driversGetPayload<{ include: typeof driverInclude }>;
+
+async function withStats(rows: DriverRow[]) {
+  if (rows.length === 0) return [];
+  const ids = rows.map((row) => row.id);
+  const [activeGroups, deliveredGroups, ratingGroups] = await Promise.all([
+    prisma.deliveries.groupBy({
+      by: ["driver_id"],
+      where: { driver_id: { in: ids }, status: { in: [...ACTIVE] } },
+      _count: { _all: true },
+    }),
+    prisma.deliveries.groupBy({
+      by: ["driver_id"],
+      where: { driver_id: { in: ids }, status: "DELIVERED" },
+      _count: { _all: true },
+    }),
+    prisma.driver_ratings.groupBy({
+      by: ["driver_id"],
+      where: { driver_id: { in: ids } },
+      _avg: { score: true },
+      _count: { _all: true },
+    }),
+  ]);
+  const active = new Map(activeGroups.flatMap((group) => (group.driver_id == null ? [] : [[group.driver_id, group._count._all] as const])));
+  const completed = new Map(
+    deliveredGroups.flatMap((group) => (group.driver_id == null ? [] : [[group.driver_id, group._count._all] as const])),
+  );
+  const ratings = new Map(
+    ratingGroups.flatMap((group) =>
+      group.driver_id == null ? [] : [[group.driver_id, { average: group._avg.score, count: group._count._all }] as const],
+    ),
+  );
+  return rows.map((row) => {
+    const rating = ratings.get(row.id);
+    const ratingCount = rating?.count ?? 0;
+    const ratingAverage =
+      ratingCount && rating?.average != null ? Math.round(Number(rating.average) * 10) / 10 : null;
+    return toDriver(row, {
+      active: active.get(row.id) ?? 0,
+      completed: completed.get(row.id) ?? 0,
+      ratingAverage,
+      ratingCount,
+    });
   });
-  return rows.map(toDriver);
+}
+
+export async function listDrivers(query: {
+  q?: string;
+  status?: string;
+  assignable?: boolean;
+  page: number;
+  pageSize: number;
+}) {
+  await syncAllDriverPresence();
+  const filters: Prisma.driversWhereInput[] = [];
+  if (query.status) filters.push({ status: query.status });
+  if (query.assignable) {
+    filters.push({ status: { not: "OFFLINE" } });
+    filters.push({ users: { enabled: true } });
+  }
+  const q = query.q?.trim();
+  if (q) {
+    filters.push({
+      OR: [
+        { license_number: { contains: q, mode: "insensitive" } },
+        { users: { first_name: { contains: q, mode: "insensitive" } } },
+        { users: { last_name: { contains: q, mode: "insensitive" } } },
+        { users: { email: { contains: q, mode: "insensitive" } } },
+      ],
+    });
+  }
+  const where = filters.length ? { AND: filters } : {};
+  const skip = (query.page - 1) * query.pageSize;
+  const [total, rows] = await prisma.$transaction([
+    prisma.drivers.count({ where }),
+    prisma.drivers.findMany({
+      where,
+      include: driverInclude,
+      orderBy: { id: "asc" },
+      skip,
+      take: query.pageSize,
+    }),
+  ]);
+  return {
+    items: await withStats(rows),
+    page: query.page,
+    pageSize: query.pageSize,
+    total,
+  };
 }
 
 export async function myDriver(userId: bigint) {
@@ -81,26 +168,41 @@ export async function myDriver(userId: bigint) {
   });
   if (!row) throw new AppError(403, "Driver profile not found");
 
-  const deliveries = await listDeliveries({
-    page: 1,
-    pageSize: 50,
-    driverId: row.id,
-  });
+  const [drivers, active, recent] = await Promise.all([
+    withStats([row]),
+    listDeliveries({
+      page: 1,
+      pageSize: 50,
+      driverId: row.id,
+      statuses: [...ACTIVE],
+    }),
+    listDeliveries({
+      page: 1,
+      pageSize: 20,
+      driverId: row.id,
+      statuses: ["DELIVERED", "FAILED", "CANCELLED"],
+    }),
+  ]);
 
-  return { driver: toDriver(row), deliveries: deliveries.items };
+  return { driver: drivers[0], deliveries: [...active.items, ...recent.items] };
 }
 
-async function driverById(id: bigint) {
+async function driverRow(id: bigint) {
   const row = await prisma.drivers.findUnique({ where: { id }, include: driverInclude });
   if (!row) throw new AppError(404, "Driver not found");
   return row;
+}
+
+async function driverById(id: bigint) {
+  const [driver] = await withStats([await driverRow(id)]);
+  return driver;
 }
 
 export async function createDriver(input: {
   firstName: string;
   lastName: string;
   username: string;
-  email: string;
+  email?: string | null;
   phone: string;
   password: string;
   licenseNumber: string;
@@ -108,7 +210,8 @@ export async function createDriver(input: {
   const user = await createStaffAccount({ ...input, role: "DRIVER" });
   const row = await prisma.drivers.findUnique({ where: { user_id: user.id }, include: driverInclude });
   if (!row) throw new AppError(500, "Driver profile was not created");
-  return toDriver(row);
+  const [driver] = await withStats([row]);
+  return driver;
 }
 
 export async function updateDriver(
@@ -119,12 +222,11 @@ export async function updateDriver(
     email?: string;
     phone?: string;
     licenseNumber?: string;
-    status?: "AVAILABLE" | "OFFLINE";
     enabled?: boolean;
     password?: string;
   },
 ) {
-  const driver = await driverById(id);
+  const driver = await driverRow(id);
   const password = input.password ? await bcrypt.hash(input.password, 10) : undefined;
 
   try {
@@ -144,30 +246,21 @@ export async function updateDriver(
         },
       });
 
-      let nextStatus = input.status;
-      if (input.enabled === false) nextStatus = "OFFLINE";
-      if (nextStatus) {
+      const license = input.licenseNumber?.trim();
+      if (license || input.enabled === false) {
         await tx.drivers.update({
           where: { id },
-          data: { license_number: input.licenseNumber?.trim(), status: nextStatus },
-        });
-      } else if (input.licenseNumber) {
-        await tx.drivers.update({
-          where: { id },
-          data: { license_number: input.licenseNumber.trim() },
+          data: {
+            ...(license ? { license_number: license } : {}),
+            ...(input.enabled === false ? { status: "OFFLINE" as const } : {}),
+          },
         });
       }
-
-      if (input.enabled !== false && input.status === "AVAILABLE") {
-        const active = await tx.deliveries.count({
-          where: { driver_id: id, status: { in: ["ACCEPTED", "PICKED_UP", "IN_TRANSIT"] } },
-        });
-        await tx.drivers.update({
-          where: { id },
-          data: { status: active > 0 ? "ON_DELIVERY" : "AVAILABLE" },
-        });
+      if (input.enabled === false) {
+        await tx.tokens.updateMany({ where: { user_id: driver.user_id }, data: { revoked: true } });
       }
     });
+    if (input.enabled !== false) await syncDriverPresence(driver.user_id);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       throw new AppError(409, "Email, phone, or license is already in use");
@@ -175,25 +268,28 @@ export async function updateDriver(
     throw error;
   }
 
-  return toDriver(await driverById(id));
+  return driverById(id);
 }
 
+const OPEN_DELIVERY = ["PENDING", "ASSIGNED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT"];
+
 export async function deleteDriver(id: bigint) {
-  const driver = await prisma.drivers.findUnique({
-    where: { id },
-    include: { deliveries: { select: { id: true }, take: 1 } },
-  });
+  const driver = await prisma.drivers.findUnique({ where: { id } });
   if (!driver) throw new AppError(404, "Driver not found");
-  if (driver.deliveries.length > 0) {
-    throw new AppError(
-      409,
-      "This driver still has deliveries. Reassign or delete those deliveries, or disable the driver.",
-    );
+  const open = await prisma.deliveries.count({
+    where: { driver_id: id, status: { in: OPEN_DELIVERY } },
+  });
+  if (open > 0) {
+    throw new AppError(409, "This driver still has a delivery in progress. Finish or reassign it first.");
   }
 
   await prisma.$transaction(async (tx) => {
+    await tx.deliveries.updateMany({ where: { driver_id: id }, data: { driver_id: null } });
+    await tx.driver_ratings.deleteMany({ where: { driver_id: id } });
     await tx.delivery_events.updateMany({ where: { actor_id: driver.user_id }, data: { actor_id: null } });
+    await tx.refunds.updateMany({ where: { actor_id: driver.user_id }, data: { actor_id: null } });
     await tx.tokens.deleteMany({ where: { user_id: driver.user_id } });
+    await tx.users_roles.deleteMany({ where: { user_id: driver.user_id } });
     await tx.vehicle.updateMany({ where: { driver_id: id }, data: { driver_id: null } });
     await tx.driver_locations.deleteMany({ where: { driver_id: id } });
     await tx.drivers.delete({ where: { id } });

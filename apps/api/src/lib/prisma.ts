@@ -17,6 +17,13 @@ const SEQUENCES = [
   "drivers_id_seq",
   "vehicle_id_seq",
   "delivery_events_id_seq",
+  "payments_id_seq",
+  "payment_attempts_id_seq",
+  "payment_webhook_events_id_seq",
+  "refunds_id_seq",
+  "driver_ratings_id_seq",
+  "saved_addresses_id_seq",
+  "login_codes_id_seq",
 ] as const;
 
 export type SequenceName = (typeof SEQUENCES)[number];

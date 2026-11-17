@@ -2,7 +2,7 @@ import { Router } from "express";
 import { AppError } from "../../lib/errors";
 import { asyncHandler } from "../../middleware/asyncHandler";
 import { OPERATOR_ROLES, requireAuth, requireRoles } from "../../middleware/auth";
-import { assignDriverSchema, createDeliverySchema, updateDeliverySchema, updateStatusSchema } from "./delivery.schema";
+import { assignDriverSchema, createDeliverySchema, ratingSchema, updateDeliverySchema, updateStatusSchema } from "./delivery.schema";
 import {
   assignDriver,
   createDelivery,
@@ -10,6 +10,7 @@ import {
   driverForUser,
   getDelivery,
   listDeliveries,
+  rateDelivery,
   respondToAssignment,
   updateDelivery,
   updateStatus,
@@ -76,7 +77,7 @@ router.post(
 
 router.patch(
   "/:id",
-  requireRoles(...OPERATOR_ROLES),
+  requireRoles("ADMIN"),
   asyncHandler(async (req, res) => {
     const body = updateDeliverySchema.parse(req.body);
     res.json(await updateDelivery(idParam(req.params.id), req.auth!.userId, body));
@@ -85,7 +86,7 @@ router.patch(
 
 router.delete(
   "/:id",
-  requireRoles(...OPERATOR_ROLES),
+  requireRoles("ADMIN"),
   asyncHandler(async (req, res) => {
     await deleteDelivery(idParam(req.params.id));
     res.status(204).end();
@@ -116,8 +117,9 @@ router.post(
   "/:id/assign",
   requireRoles(...OPERATOR_ROLES),
   asyncHandler(async (req, res) => {
+    const id = idParam(req.params.id);
     const body = assignDriverSchema.parse(req.body);
-    res.json(await assignDriver(idParam(req.params.id), body.driverId, req.auth!.userId));
+    res.json(await assignDriver(id, body.driverId, req.auth!.userId));
   }),
 );
 
@@ -138,11 +140,22 @@ router.post(
 );
 
 router.post(
+  "/:id/rating",
+  requireRoles("CUSTOMER"),
+  asyncHandler(async (req, res) => {
+    const body = ratingSchema.parse(req.body);
+    res.status(201).json(await rateDelivery(idParam(req.params.id), req.auth!.userId, body.score));
+  }),
+);
+
+router.post(
   "/:id/status",
   requireRoles("ADMIN", "DISPATCHER", "DRIVER", "CUSTOMER"),
   asyncHandler(async (req, res) => {
     const body = updateStatusSchema.parse(req.body);
-    res.json(await updateStatus(idParam(req.params.id), body.status, req.auth!));
+    res.json(
+      await updateStatus(idParam(req.params.id), body.status, req.auth!, body.confirmationCode, body.failureReason),
+    );
   }),
 );
 

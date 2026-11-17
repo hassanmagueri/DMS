@@ -13,7 +13,7 @@ const createSchema = z.object({
   firstName: z.string().trim().min(1).max(255),
   lastName: z.string().trim().min(1).max(255),
   username: z.string().trim().min(3).max(255).regex(/^[a-zA-Z0-9_]+$/),
-  email: z.string().trim().email().max(100),
+  email: z.union([z.string().trim().email().max(100), z.literal("")]).optional(),
   phone: z.string().trim().min(6).max(20),
   password: z.string().min(8).max(72),
   licenseNumber: z.string().trim().min(3).max(255),
@@ -25,7 +25,6 @@ const updateSchema = z.object({
   email: z.string().trim().email().max(100).optional(),
   phone: z.string().trim().min(6).max(20).optional(),
   licenseNumber: z.string().trim().min(3).max(255).optional(),
-  status: z.enum(["AVAILABLE", "OFFLINE"]).optional(),
   enabled: z.boolean().optional(),
   password: z.string().min(8).max(72).optional(),
 });
@@ -38,11 +37,26 @@ function idParam(value: string | string[] | undefined) {
 
 router.use(requireAuth);
 
+function pageQuery(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+  return parsed;
+}
+
 router.get(
   "/",
   requireRoles(...OPERATOR_ROLES),
-  asyncHandler(async (_req, res) => {
-    res.json(await listDrivers());
+  asyncHandler(async (req, res) => {
+    const pageSize = Math.min(pageQuery(req.query.pageSize, 20), 50);
+    res.json(
+      await listDrivers({
+        q: typeof req.query.q === "string" ? req.query.q : undefined,
+        status: typeof req.query.status === "string" ? req.query.status : undefined,
+        assignable: req.query.assignable === "1",
+        page: pageQuery(req.query.page, 1),
+        pageSize,
+      }),
+    );
   }),
 );
 

@@ -6,6 +6,7 @@ import { AppError } from "../../lib/errors";
 import { nextId, prisma } from "../../lib/prisma";
 import { asyncHandler } from "../../middleware/asyncHandler";
 import { requireAuth, requireRoles } from "../../middleware/auth";
+import { deleteUser, setUserAccess } from "./user.service";
 
 const router = Router();
 const ROLES = ["ADMIN", "DISPATCHER", "DRIVER", "CUSTOMER"] as const;
@@ -14,7 +15,7 @@ const createSchema = z.object({
   firstName: z.string().trim().min(1).max(255),
   lastName: z.string().trim().min(1).max(255),
   username: z.string().trim().min(3).max(255).regex(/^[a-zA-Z0-9_]+$/),
-  email: z.string().trim().email().max(100),
+  email: z.union([z.string().trim().email().max(100), z.literal("")]).optional(),
   phone: z.string().trim().min(6).max(20),
   password: z.string().min(8).max(72),
   role: z.enum(ROLES),
@@ -32,7 +33,7 @@ const updateSchema = z.object({
 function toUser(user: {
   id: bigint;
   username: string;
-  email: string;
+  email: string | null;
   phone: string;
   first_name: string;
   last_name: string;
@@ -84,6 +85,11 @@ router.post(
   "/",
   asyncHandler(async (req, res) => {
     const body = createSchema.parse(req.body);
+    const email =
+      body.role === "DISPATCHER" || body.role === "DRIVER" ? null : body.email?.trim() || null;
+    if ((body.role === "CUSTOMER" || body.role === "ADMIN") && !email) {
+      throw new AppError(400, "Enter an email");
+    }
     if (body.role === "DRIVER" && !body.licenseNumber) {
       throw new AppError(400, "A driver needs a license number");
     }
@@ -97,12 +103,14 @@ router.post(
             first_name: body.firstName,
             last_name: body.lastName,
             username: body.username,
-            email: body.email,
+            email,
             phone: body.phone,
             password,
             role: body.role,
             status: "ACTIVE",
             enabled: true,
+            email_verified: false,
+            must_change_password: true,
             ...(roleRow ? { users_roles: { create: { role_id: roleRow.id } } } : {}),
           },
         });
@@ -112,7 +120,7 @@ router.post(
               id: await nextId("drivers_id_seq"),
               user_id: created.id,
               license_number: body.licenseNumber,
-              status: "AVAILABLE",
+              status: "OFFLINE",
             },
           });
         }
@@ -137,8 +145,8 @@ router.patch(
     const body = updateSchema.parse(req.body);
     const existing = await prisma.users.findUnique({ where: { id } });
     if (!existing) throw new AppError(404, "User not found");
-    if (existing.id === req.auth!.userId && body.enabled === false) {
-      throw new AppError(400, "You cannot disable your own account");
+    if (body.enabled !== undefined) {
+      await setUserAccess(id, req.auth!.userId, body.enabled);
     }
     const user = await prisma.users.update({
       where: { id },
@@ -146,12 +154,20 @@ router.patch(
         first_name: body.firstName,
         last_name: body.lastName,
         phone: body.phone,
-        enabled: body.enabled,
-        status: body.status ?? (body.enabled === false ? "DISABLED" : body.enabled === true ? "ACTIVE" : undefined),
         updated_at: new Date(),
       },
     });
     res.json(toUser(user));
+  }),
+);
+
+router.delete(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    if (!raw || !/^\d+$/.test(raw)) throw new AppError(400, "Invalid id");
+    await deleteUser(BigInt(raw), req.auth!.userId);
+    res.status(204).end();
   }),
 );
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/page-header";
 import { ErrorBlock, LoadingBlock } from "@/components/page-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SavedAddressPicker, type SavedAddress } from "@/components/saved-address-picker";
 import { api, ApiError } from "@/lib/api";
 import { personName } from "@/lib/format";
 import type { Customer, Delivery } from "@/types/domain";
@@ -32,10 +34,12 @@ function AddressFields({
   title,
   value,
   onChange,
+  saved,
 }: {
   title: string;
   value: AddressForm;
   onChange: (value: AddressForm) => void;
+  saved: SavedAddress[];
 }) {
   function set(field: keyof AddressForm, next: string) {
     onChange({ ...value, [field]: next });
@@ -44,6 +48,18 @@ function AddressFields({
   return (
     <fieldset className="space-y-3 rounded-xl border p-4">
       <legend className="px-1 text-sm font-medium">{title}</legend>
+      <SavedAddressPicker
+        addresses={saved}
+        onPick={(address) =>
+          onChange({
+            street: address.street,
+            city: address.city,
+            state: address.state ?? "",
+            postalCode: address.postalCode ?? "",
+            country: address.country,
+          })
+        }
+      />
       <div className="space-y-2">
         <Label>Street</Label>
         <Input value={value.street} onChange={(event) => set("street", event.target.value)} required />
@@ -77,6 +93,7 @@ export default function NewDeliveryPage() {
   const [weight, setWeight] = useState("");
   const [pickup, setPickup] = useState<AddressForm>(emptyAddress);
   const [dropoff, setDropoff] = useState<AddressForm>(emptyAddress);
+  const [saved, setSaved] = useState<SavedAddress[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -95,6 +112,16 @@ export default function NewDeliveryPage() {
   useEffect(() => {
     loadCustomers();
   }, []);
+
+  useEffect(() => {
+    if (!customerId) {
+      setSaved([]);
+      return;
+    }
+    api<SavedAddress[]>(`/api/addresses?customerId=${customerId}`)
+      .then(setSaved)
+      .catch(() => setSaved([]));
+  }, [customerId]);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -123,10 +150,7 @@ export default function NewDeliveryPage() {
 
   return (
     <form className="mx-auto max-w-3xl space-y-4" onSubmit={onSubmit}>
-      <div>
-        <h2 className="text-2xl font-semibold">New delivery</h2>
-        <p className="text-sm text-muted-foreground">A pending delivery is stored with a pickup and drop-off address.</p>
-      </div>
+      <PageHeader title="New delivery" description="Choose a customer and the pickup and drop-off addresses." />
       {customers.length === 0 ? (
         <ErrorBlock message="No enabled customers are available." />
       ) : (
@@ -160,8 +184,8 @@ export default function NewDeliveryPage() {
               />
             </div>
           </div>
-          <AddressFields title="Pickup" value={pickup} onChange={setPickup} />
-          <AddressFields title="Drop-off" value={dropoff} onChange={setDropoff} />
+          <AddressFields title="Pickup" value={pickup} onChange={setPickup} saved={saved} />
+          <AddressFields title="Drop-off" value={dropoff} onChange={setDropoff} saved={saved} />
           <Button type="submit" disabled={submitting || !customerId}>
             {submitting ? "Saving..." : "Create delivery"}
           </Button>

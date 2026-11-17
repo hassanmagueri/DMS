@@ -1,73 +1,122 @@
 # Delivery Management System
 
-Operations console for a final-year project. Next.js renders the desk. Express is the only API. Prisma reads the existing PostgreSQL database `dms`. The browser never connects to Postgres.
+Operations desk for deliveries, drivers, and pay on delivery. Next.js renders the desk. Express is the only API. Prisma reads the PostgreSQL database `dms`. The browser never connects to Postgres.
+
+Roles stored on `users.role` are `ADMIN`, `DISPATCHER`, `DRIVER`, and `CUSTOMER`. There is no `MANAGER` role.
+
+| Role | What they can do |
+| --- | --- |
+| Admin | Full desk. Creates dispatchers, drivers, and deliveries. Edits and deletes deliveries. Blocks or removes users who have no delivery history. Sees every open action and can filter it by role. |
+| Dispatcher | Same operations desk for deliveries, customers, and drivers. Assigns drivers and updates status. Can block a customer or a driver. Cannot manage dispatcher accounts, and cannot edit or delete a delivery. |
+| Driver | Sees assigned work. Accepts or rejects a job. Moves it through pickup and transit, marks a failed stop with a reason, and collects cash. Confirming delivery asks for the customer's 6-digit code. |
+| Customer | Requests a delivery, keeps a private address book, follows status, pays the driver in cash, and rates the driver after the code is confirmed. |
 
 ## Screens
 
-| Screen | Tables |
+| Screen | Who |
 | --- | --- |
-| Login and signup | `users`, `users_roles`, `tokens` |
-| Overview | `deliveries`, `drivers` |
-| Deliveries | `deliveries`, `addresses`, `users`, `drivers` |
-| Drivers | `drivers`, `users`, `vehicle` |
-| Dispatchers | `users` where `role` is `DISPATCHER` |
-| Driver console | the signed-in driver's rows in `deliveries` |
+| Login and signup | Everyone |
+| Dashboard | Admin, dispatcher. Pending deliveries are first, oldest first, with waiting time. A stop older than 24 hours is marked Late. |
+| Deliveries, customers, drivers, dispatchers, vehicles | Admin, dispatcher |
+| Actions | Admin sees open actions and filters by customer, driver, or dispatcher. The page keeps the latest open work when the queue is large. Dispatcher sees the queue that still needs a driver. |
+| Reports | Admin, dispatcher. Status counts and a spreadsheet of the visible rows. |
+| Users | Admin |
+| Settings and profile photo | The signed-in user |
+| Driver console | Driver |
+| Customer deliveries, new request, addresses, payments | Customer |
 
-Roles already stored in `users.role` are `ADMIN`, `DISPATCHER`, `DRIVER`, and `CUSTOMER`. Dispatchers use the same operations desk as admins. Customers are selectable on a delivery, and they do not get a console in this MVP. There is no `MANAGER` role in the database.
+## Delivery flow
 
-Delivery statuses: `PENDING` → `ASSIGNED` → `ACCEPTED` → `PICKED_UP` → `IN_TRANSIT` → `DELIVERED`. A driver can reject an assignment, which stores `REJECTED` and returns the job to the dispatcher queue. `CANCELLED` is allowed before pickup. `FAILED` is an operator outcome after pickup. Every change is stored in `delivery_events`. Rules live in `apps/api/src/modules/deliveries/delivery.schema.ts`.
+`PENDING` → `ASSIGNED` → `ACCEPTED` → `PICKED_UP` → `IN_TRANSIT` → `DELIVERED`.
+
+A driver can reject an assignment. That stores `REJECTED`, clears the driver, and returns the job to the queue. `CANCELLED` is allowed before pickup. From pickup or transit, the driver or an operator can mark the stop `FAILED` and must choose a reason: nobody home, wrong address, refused, or unreachable. A dispatcher can send that delivery out again, which returns it to `PENDING`.
+
+Every change is stored in `delivery_events`. The transition rules live in `apps/api/src/modules/deliveries/delivery.schema.ts`.
+
+Delivered stops need the customer's 6-digit confirmation code. The customer can rate the driver from 1 to 5 only after that code is confirmed. One rating per delivery. Driver lists show the average as stars.
+
+## Pay on delivery
+
+Price is calculated on the server: 20.00 MAD plus 5.00 MAD per kilogram. Currency is MAD. Card checkout is not offered. A new delivery gets a pending cash payment, and assignment does not wait for that payment. The assigned driver, a dispatcher, or an admin records the cash when the parcel is handed over. Refunds are admin-only.
 
 ## Run the demo
 
-PostgreSQL is already running in Docker as `dms-postgres` on port **5433** (reachable from WSL as `localhost:5433`).
-
-**WSL (recommended copy):** `\\wsl.localhost\Ubuntu\home\chom\pr` → `/home/chom/pr`
-
-Install Node.js 20+ inside Ubuntu, then:
+From the project root, one command starts Postgres, the API, and the desk in production mode:
 
 ```bash
-cd /home/chom/pr/apps/api && npm install && npx prisma generate && npm run dev
+docker compose up --build
 ```
 
-```bash
-cd /home/chom/pr/apps/web && npm install && npm run dev
-```
-
-**Windows copy:** `D:\pr` — same commands in PowerShell from `apps/api` and `apps/web`.
-
-- Web: http://localhost:3000
+- Desk: http://localhost:3000
 - API health: http://localhost:4000/health
 
-Copy `apps/api/.env.example` to `apps/api/.env` and `apps/web/.env.local.example` to `apps/web/.env.local` if those files are missing. The checked-in examples match the local Docker database.
+The database is created on first start from `docker/postgres/init/01-dms.sql`, including the demo accounts. Sign in with the usernames in the table below. Password for every seeded account: `Admin123!`
+
+To run the API and the desk on the host instead, install Node.js 22 or newer and use the existing Postgres on port 5433:
+
+```bash
+cd apps/api && npm install && npx prisma generate && npm run dev
+```
+
+```bash
+cd apps/web && npm install && npm run dev
+```
+
+Copy `apps/api/.env.example` to `apps/api/.env` and `apps/web/.env.local.example` to `apps/web/.env.local` if those files are missing.
+
+The scripts under `apps/api/prisma/sql` record columns added after the first database. The compose database already includes them. Apply the scripts only to an older Postgres that was created before those files. Do not run `prisma migrate` or `prisma db push`.
+
+```bash
+docker exec -i dms-postgres psql -U dms -d dms -v ON_ERROR_STOP=1 < apps/api/prisma/sql/2026-11-01-payments.sql
+docker exec -i dms-postgres psql -U dms -d dms -v ON_ERROR_STOP=1 < apps/api/prisma/sql/2026-11-13-delivery-proof.sql
+docker exec -i dms-postgres psql -U dms -d dms -v ON_ERROR_STOP=1 < apps/api/prisma/sql/2026-11-15-ratings-addresses-failure.sql
+docker exec -i dms-postgres psql -U dms -d dms -v ON_ERROR_STOP=1 < apps/api/prisma/sql/2026-11-15-scale-indexes.sql
+docker exec -i dms-postgres psql -U dms -d dms -v ON_ERROR_STOP=1 < apps/api/prisma/sql/2026-11-15-login-codes.sql
+docker exec -i dms-postgres psql -U dms -d dms -v ON_ERROR_STOP=1 < apps/api/prisma/sql/2026-11-16-email-verified.sql
+docker exec -i dms-postgres psql -U dms -d dms -v ON_ERROR_STOP=1 < apps/api/prisma/sql/2026-11-16-optional-staff-email.sql
+docker exec -i dms-postgres psql -U dms -d dms -v ON_ERROR_STOP=1 < apps/api/prisma/sql/2026-11-17-must-change-password.sql
+```
+
+`npm test` in `apps/api` checks the price quote and the cash payment rules.
+
+Delivery and driver lists are paged. The dashboard shows the oldest 40 pending stops and links to the full list. Driver ratings and active counts are aggregated in SQL, so a desk with thousands of deliveries and drivers does not load every row into the page.
 
 ## Demo accounts
 
-Password for every existing user: `Admin123!`
+Password for every seeded account: `Admin123!`
 
-| Role | Email |
-| --- | --- |
-| Admin | admin@dms.io |
-| Dispatcher | dispatch@dms.io |
-| Driver | john.driver@dms.io |
+Sign-in uses a username and password for every role. Seeded accounts are already set up, so they open straight away. An account an admin creates starts unfinished: the first sign-in asks for an email, a 6-digit code, and a new password before the desk opens. The code expires in 10 minutes. Customer sign-up asks for a username, email, and password. A 6-digit code confirms the email before the account opens. An admin creates a dispatcher or driver without an email.
 
-`apps/api/scripts/set-demo-password.ts` rewrites only the `password` column so these accounts can sign in. It does not insert or delete rows. The original hashes in `dms` did not match any password stored in the project.
+Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` in `apps/api/.env` so messages are delivered. Until mail is configured, the code is shown on the form. Dispatchers are emailed when a delivery is waiting for a driver. The assigned driver is emailed when a dispatcher assigns the stop. The customer is emailed when the delivery arrives.
 
-## Jury script
+| Role | Username | Email | Name |
+| --- | --- | --- | --- |
+| Admin | admin | admin@dms.io | Alex Vance |
+| Dispatcher | dispatcher1 | dispatch@dms.io | Marcus Brody |
+| Driver | driver_john | john.driver@dms.io | John Doe |
+| Customer | cust_alice | alice.smith@example.com | Alice Smith |
+| Customer | cust_bob | bob.jones@example.com | Bob Jones |
+| Customer | cust_charlie | charlie.brown@example.com | Charlie Brown |
 
-1. Sign in as `admin@dms.io`.
-2. On Overview, confirm the counts match the database.
-3. Open Deliveries, create one for Alice Smith, then assign an available driver.
-4. Sign out and sign in as `john.driver@dms.io` if that driver was assigned. Move the delivery to picked up, in transit, then delivered.
-5. Sign back in as the admin and confirm the overview counts changed.
+`apps/api/scripts/set-demo-password.ts` rewrites only the `password` column so these accounts can sign in. It does not insert or delete rows.
+
+## Jury walkthrough
+
+1. Sign in as `admin`. On the dashboard, open a pending delivery from the first table.
+2. Open Actions and switch the filter between customers, drivers, and dispatchers.
+3. Open Drivers and read the star rating. Open a delivery and assign an available driver.
+4. Sign in as that driver. Accept the job, then move it to picked up and in transit. Leave the failed-stop panel unused unless you intend to fail that delivery.
+5. Sign in as the customer on that delivery. Open Addresses, then open the delivery, confirm it with the code, and rate the driver.
+6. Sign back in as the admin. Reports shows the new counts. Download spreadsheet writes the visible status table.
 
 ## Database rules
 
 `npx prisma db pull` and `npx prisma generate` read the live schema. Do not run `prisma migrate` or `prisma db push`.
 
-The `id` columns do not have a SQL default, even though a sequence is owned by each column. The API allocates ids with `nextval` on `addresses_id_seq`, `deliveries_id_seq`, and `tokens_id_seq`. Existing rows are left in place.
+The API allocates ids with `nextval` before insert. Sequences include `addresses_id_seq`, `deliveries_id_seq`, `tokens_id_seq`, `users_id_seq`, `drivers_id_seq`, `vehicle_id_seq`, `delivery_events_id_seq`, the payment sequences, `driver_ratings_id_seq`, and `saved_addresses_id_seq`. Existing rows are left in place.
 
 PostgreSQL system columns such as `xmin` and `ctid` are not application fields.
 
-## Out of scope
+## Left out
 
-Live maps, payments, email, notifications, file upload, and a customer portal.
+Live driver maps, card payments, and email.

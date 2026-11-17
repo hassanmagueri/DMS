@@ -1,13 +1,14 @@
 export type User = {
   id: number;
   username: string;
-  email: string;
+  email: string | null;
   phone: string;
   firstName: string;
   lastName: string;
   role: string;
   status: string;
   enabled: boolean;
+  avatar: string | null;
 };
 
 export type Address = {
@@ -34,16 +35,30 @@ export type Delivery = {
   };
   driver: {
     id: number;
+    userId: number;
     status: string;
     licenseNumber: string;
     firstName: string;
     lastName: string;
-    email: string;
+    email: string | null;
     phone: string;
     location: { latitude: number; longitude: number; updatedAt: string } | null;
   } | null;
   pickup: Address;
   dropoff: Address;
+  proof: {
+    code: string | null;
+    confirmedAt: string | null;
+    confirmedBy: string | null;
+  };
+  payment: {
+    id: number;
+    amount: string;
+    currency: string;
+    status: string;
+  } | null;
+  failureReason: string | null;
+  rating: { score: number; createdAt: string } | null;
   timeline: {
     id: number;
     fromStatus: string | null;
@@ -60,11 +75,13 @@ export type Driver = {
   status: string;
   activeDeliveries: number;
   completedDeliveries: number;
+  ratingAverage: number | null;
+  ratingCount: number;
   user: {
     id: number;
     firstName: string;
     lastName: string;
-    email: string;
+    email: string | null;
     phone: string;
     username: string;
     enabled: boolean;
@@ -83,7 +100,7 @@ export type Dispatcher = {
   username: string;
   firstName: string;
   lastName: string;
-  email: string;
+  email: string | null;
   phone: string;
   status: string;
   enabled: boolean;
@@ -100,6 +117,13 @@ export type Customer = {
 
 export type DeliveryPage = {
   items: Delivery[];
+  page: number;
+  pageSize: number;
+  total: number;
+};
+
+export type DriverPage = {
+  items: Driver[];
   page: number;
   pageSize: number;
   total: number;
@@ -124,6 +148,7 @@ export type DashboardSummary = {
   };
   byStatus: { status: string; count: number }[];
   recent: Delivery[];
+  pending: Delivery[];
   activities: {
     id: number;
     deliveryId: number;

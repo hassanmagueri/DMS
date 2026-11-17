@@ -30,11 +30,18 @@ model deliveries {
   status                                             String    @db.VarChar(255)
   created_at                                         DateTime  @default(now()) @db.Timestamp(6)
   delivered_at                                       DateTime? @db.Timestamp(6)
-  users                                              users     @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  confirmation_code                                  String    @unique(map: "uq_deliveries_confirmation_code") @db.VarChar(6)
+  proof_confirmed_at                                 DateTime? @db.Timestamp(6)
+  proof_confirmed_by                                 BigInt?
+  failure_reason                                     String?   @db.VarChar(32)
+  users                                              users     @relation("delivery_customer", fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  proof_actor                                        users?    @relation("delivery_proof", fields: [proof_confirmed_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
   drivers                                            drivers?  @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   addresses_deliveries_dropoff_address_idToaddresses addresses @relation("deliveries_dropoff_address_idToaddresses", fields: [dropoff_address_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   addresses_deliveries_pickup_address_idToaddresses  addresses @relation("deliveries_pickup_address_idToaddresses", fields: [pickup_address_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   delivery_events                                    delivery_events[]
+  payments                                           payments?
+  driver_ratings                                     driver_ratings?
 
   @@index([created_at(sort: Desc)], map: "idx_deliveries_created_at")
   @@index([customer_id], map: "idx_deliveries_customer_id")
@@ -48,6 +55,7 @@ model drivers {
   license_number String       @unique @db.VarChar(255)
   status         String       @db.VarChar(255)
   deliveries     deliveries[]
+  driver_ratings driver_ratings[]
   users            users             @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   vehicle          vehicle?
   driver_locations driver_locations?
@@ -74,21 +82,43 @@ model tokens {
 model users {
   id          BigInt        @id @default(autoincrement())
   username    String        @unique @db.VarChar(255)
-  email       String        @unique @db.VarChar(100)
+  email          String?  @unique @db.VarChar(100)
+  pending_email  String?  @db.VarChar(100)
   phone       String        @unique @db.VarChar(20)
   password    String        @db.VarChar(255)
   first_name  String        @db.VarChar(255)
   last_name   String        @db.VarChar(255)
   role        String        @db.VarChar(255)
   status      String        @db.VarChar(255)
-  enabled     Boolean       @default(true)
+  enabled              Boolean @default(true)
+  email_verified       Boolean @default(true)
+  must_change_password Boolean @default(false)
+  avatar         String?
   created_at  DateTime      @default(now()) @db.Timestamp(6)
   updated_at  DateTime?     @default(now()) @db.Timestamp(6)
-  deliveries      deliveries[]
+  deliveries           deliveries[] @relation("delivery_customer")
+  confirmed_deliveries deliveries[] @relation("delivery_proof")
   drivers         drivers?
   tokens          tokens[]
-  users_roles     users_roles[]
-  delivery_events delivery_events[]
+  users_roles             users_roles[]
+  delivery_events         delivery_events[]
+  payments                payments[]
+  refunds                 refunds[]
+  driver_ratings          driver_ratings[]
+  saved_addresses         saved_addresses[]
+  login_codes             login_codes[]
+}
+
+model login_codes {
+  id         BigInt   @id @default(autoincrement())
+  user_id    BigInt
+  code_hash  String   @db.VarChar(64)
+  expires_at DateTime @db.Timestamp(6)
+  attempts   Int      @default(0)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id], map: "idx_login_codes_user_id")
 }
 
 model users_roles {
@@ -120,6 +150,98 @@ model driver_locations {
   longitude  Float
   updated_at DateTime @default(now()) @db.Timestamp(6)
   drivers    drivers  @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model payments {
+  id                   BigInt                   @id @default(autoincrement())
+  delivery_id          BigInt                   @unique
+  customer_id          BigInt
+  amount               Decimal                  @db.Decimal(12, 2)
+  currency             String                   @default("MAD") @db.VarChar(3)
+  method               String                   @db.VarChar(32)
+  status               String                   @db.VarChar(32)
+  provider             String                   @db.VarChar(32)
+  idempotency_key      String                   @unique @db.VarChar(128)
+  provider_reference   String?                  @db.VarChar(255)
+  created_at           DateTime                 @default(now()) @db.Timestamp(6)
+  updated_at           DateTime                 @default(now()) @db.Timestamp(6)
+  deliveries           deliveries               @relation(fields: [delivery_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users                users                    @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  payment_attempts     payment_attempts[]
+  payment_webhook_events payment_webhook_events[]
+  refunds              refunds[]
+
+  @@index([customer_id], map: "idx_payments_customer_id")
+  @@index([status], map: "idx_payments_status")
+}
+
+model payment_attempts {
+  id                  BigInt   @id @default(autoincrement())
+  payment_id          BigInt
+  status              String   @db.VarChar(32)
+  provider_session_id String?  @unique @db.VarChar(255)
+  checkout_url        String?
+  failure_reason      String?  @db.VarChar(500)
+  created_at          DateTime @default(now()) @db.Timestamp(6)
+  payments            payments @relation(fields: [payment_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([payment_id], map: "idx_payment_attempts_payment_id")
+}
+
+model payment_webhook_events {
+  id                BigInt    @id @default(autoincrement())
+  provider          String    @db.VarChar(32)
+  provider_event_id String    @db.VarChar(255)
+  payment_id        BigInt?
+  payload           Json
+  processed_at      DateTime? @db.Timestamp(6)
+  created_at        DateTime  @default(now()) @db.Timestamp(6)
+  payments          payments? @relation(fields: [payment_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([provider, provider_event_id], map: "uq_payment_webhook_provider_event")
+}
+
+model refunds {
+  id                 BigInt   @id @default(autoincrement())
+  payment_id         BigInt
+  amount             Decimal  @db.Decimal(12, 2)
+  currency           String   @db.VarChar(3)
+  status             String   @db.VarChar(32)
+  reason             String?  @db.VarChar(500)
+  actor_id           BigInt?
+  provider_refund_id String?  @unique @db.VarChar(255)
+  created_at         DateTime @default(now()) @db.Timestamp(6)
+  payments           payments @relation(fields: [payment_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users              users?   @relation(fields: [actor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([payment_id], map: "idx_refunds_payment_id")
+}
+
+model driver_ratings {
+  id          BigInt     @id @default(autoincrement())
+  delivery_id BigInt     @unique
+  driver_id   BigInt
+  customer_id BigInt
+  score       Int
+  created_at  DateTime   @default(now()) @db.Timestamp(6)
+  deliveries  deliveries @relation(fields: [delivery_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  drivers     drivers    @relation(fields: [driver_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users       users      @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model saved_addresses {
+  id          BigInt   @id @default(autoincrement())
+  user_id     BigInt
+  label       String   @db.VarChar(80)
+  street      String   @db.VarChar(255)
+  city        String   @db.VarChar(255)
+  state       String?  @db.VarChar(255)
+  postal_code String?  @db.VarChar(255)
+  country     String   @db.VarChar(255)
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+  users       users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id], map: "idx_saved_addresses_user_id")
 }
 
 model vehicle {

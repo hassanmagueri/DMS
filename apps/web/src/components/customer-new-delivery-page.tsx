@@ -1,13 +1,17 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
+import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SavedAddressPicker, type SavedAddress } from "@/components/saved-address-picker";
 import { api, ApiError } from "@/lib/api";
 import type { Delivery } from "@/types/domain";
 
@@ -25,6 +29,7 @@ type FormValues = z.infer<typeof schema>;
 
 export default function CustomerNewDeliveryPage() {
   const router = useRouter();
+  const [saved, setSaved] = useState<SavedAddress[]>([]);
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -37,6 +42,28 @@ export default function CustomerNewDeliveryPage() {
       dropoffCountry: "USA",
     },
   });
+
+  function loadSaved() {
+    api<SavedAddress[]>("/api/addresses")
+      .then(setSaved)
+      .catch(() => setSaved([]));
+  }
+
+  useEffect(() => {
+    loadSaved();
+  }, []);
+
+  function apply(which: "pickup" | "dropoff", address: SavedAddress) {
+    if (which === "pickup") {
+      form.setValue("pickupStreet", address.street);
+      form.setValue("pickupCity", address.city);
+      form.setValue("pickupCountry", address.country);
+      return;
+    }
+    form.setValue("dropoffStreet", address.street);
+    form.setValue("dropoffCity", address.city);
+    form.setValue("dropoffCountry", address.country);
+  }
 
   async function onSubmit(values: FormValues) {
     try {
@@ -68,18 +95,24 @@ export default function CustomerNewDeliveryPage() {
   return (
     <form className="mx-auto max-w-3xl space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
       <div>
-        <h2 className="text-2xl font-semibold">New delivery request</h2>
-        <p className="text-sm text-muted-foreground">The request stays pending until a dispatcher assigns a driver.</p>
+        <PageHeader title="New request" description="The request enters the queue immediately. Pay on delivery can be confirmed later." />
       </div>
       {field("weight", "Weight (kg)", "number")}
       <fieldset className="grid gap-3 rounded-xl border p-4 sm:grid-cols-3">
         <legend className="px-1 text-sm font-medium">Pickup</legend>
+        <div className="space-y-2 sm:col-span-3">
+          <SavedAddressPicker addresses={saved} onPick={(address) => apply("pickup", address)} />
+          <Link className="text-xs text-primary" href="/customer/addresses">Manage addresses</Link>
+        </div>
         {field("pickupStreet", "Street")}
         {field("pickupCity", "City")}
         {field("pickupCountry", "Country")}
       </fieldset>
       <fieldset className="grid gap-3 rounded-xl border p-4 sm:grid-cols-3">
         <legend className="px-1 text-sm font-medium">Drop-off</legend>
+        <div className="sm:col-span-3">
+          <SavedAddressPicker addresses={saved} onPick={(address) => apply("dropoff", address)} />
+        </div>
         {field("dropoffStreet", "Street")}
         {field("dropoffCity", "City")}
         {field("dropoffCountry", "Country")}

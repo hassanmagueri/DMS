@@ -7,7 +7,7 @@ export async function createStaffAccount(input: {
   firstName: string;
   lastName: string;
   username: string;
-  email: string;
+  email?: string | null;
   phone: string;
   password: string;
   role: "DRIVER" | "DISPATCHER";
@@ -28,12 +28,14 @@ export async function createStaffAccount(input: {
           first_name: input.firstName.trim(),
           last_name: input.lastName.trim(),
           username: input.username.trim(),
-          email: input.email.trim(),
+          email: null,
           phone: input.phone.trim(),
           password,
           role: input.role,
           status: "ACTIVE",
           enabled: true,
+          email_verified: false,
+          must_change_password: true,
           ...(roleRow ? { users_roles: { create: { role_id: roleRow.id } } } : {}),
         },
       });
@@ -44,7 +46,7 @@ export async function createStaffAccount(input: {
             id: await nextId("drivers_id_seq"),
             user_id: created.id,
             license_number: input.licenseNumber.trim(),
-            status: "AVAILABLE",
+            status: "OFFLINE",
           },
         });
       }
