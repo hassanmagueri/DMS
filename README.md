@@ -35,6 +35,10 @@ Every change is stored in `delivery_events`. The transition rules live in `apps/
 
 Delivered stops need the customer's 6-digit confirmation code. The customer can rate the driver from 1 to 5 only after that code is confirmed. One rating per delivery. Driver lists show the average as stars.
 
+## Driver presence
+
+A driver's status follows the session. Signed in, with no accepted, picked-up, or in-transit stop, the driver is `AVAILABLE`. Signed in with one of those stops, the driver is `ON_DELIVERY`. Signed out, disabled, or holding an expired token, the driver is `OFFLINE`. A new driver stays `OFFLINE` until the first sign-in. Operators do not set this status by hand. A session lasts 12 hours, so closing the browser does not sign the driver out. A driver whose deliveries are all finished can be removed. A driver with a delivery still in progress cannot.
+
 ## Pay on delivery
 
 Price is calculated on the server: 20.00 MAD plus 5.00 MAD per kilogram. Currency is MAD. Card checkout is not offered. A new delivery gets a pending cash payment, and assignment does not wait for that payment. The assigned driver, a dispatcher, or an admin records the cash when the parcel is handed over. Refunds are admin-only.
@@ -49,6 +53,8 @@ docker compose up --build
 
 - Desk: http://localhost:3000
 - API health: http://localhost:4000/health
+
+That command runs the API and the desk in production. Postgres stays on the compose network and is not published on the host. Stop the stack with `docker compose down`. The database volume is kept, so the next start reuses the same data. `docker compose down -v` deletes that data and loads the init script again on the following start.
 
 The database is created on first start from `docker/postgres/init/01-dms.sql`, including the demo accounts. Sign in with the usernames in the table below. Password for every seeded account: `Admin123!`
 
@@ -85,7 +91,7 @@ Delivery and driver lists are paged. The dashboard shows the oldest 40 pending s
 
 Password for every seeded account: `Admin123!`
 
-Sign-in uses a username and password for every role. Seeded accounts are already set up, so they open straight away. An account an admin creates starts unfinished: the first sign-in asks for an email, a 6-digit code, and a new password before the desk opens. The code expires in 10 minutes. Customer sign-up asks for a username, email, and password. A 6-digit code confirms the email before the account opens. An admin creates a dispatcher or driver without an email.
+Sign-in uses a username and password for every role. A session lasts 12 hours and stays available in other browser tabs. Closing the browser does not sign the user out. Seeded accounts are already set up, so they open straight away. An account an admin creates starts unfinished: the first sign-in asks for an email, a 6-digit code, and a new password before the desk opens. The code expires in 10 minutes. Customer sign-up asks for a username, email, and password. A 6-digit code confirms the email before the account opens. An admin creates a dispatcher or driver without an email.
 
 Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` in `apps/api/.env` so messages are delivered. Until mail is configured, the code is shown on the form. Dispatchers are emailed when a delivery is waiting for a driver. The assigned driver is emailed when a dispatcher assigns the stop. The customer is emailed when the delivery arrives.
 
@@ -117,6 +123,10 @@ The API allocates ids with `nextval` before insert. Sequences include `addresses
 
 PostgreSQL system columns such as `xmin` and `ctid` are not application fields.
 
+## Project report
+
+The written report is `Project-Report.docx` in this folder.
+
 ## Left out
 
-Live driver maps, card payments, and email.
+Live driver maps and card checkout. Mail is sent when `SMTP_HOST` is set. Until then, a verification code is shown on the form.
