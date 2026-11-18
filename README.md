@@ -56,7 +56,7 @@ docker compose up --build
 
 That command runs the API and the desk in production. Postgres stays on the compose network and is not published on the host. Stop the stack with `docker compose down`. The database volume is kept, so the next start reuses the same data. `docker compose down -v` deletes that data and loads the init script again on the following start.
 
-The database is created on first start from `docker/postgres/init/01-dms.sql`, including the demo accounts. Sign in with the usernames in the table below. Password for every seeded account: `Admin123!`
+The database is created on first start from `docker/postgres/init/01-dms.sql`. It contains one account: `admin` / `Admin123!`.
 
 To run the API and the desk on the host instead, install Node.js 22 or newer and use the existing Postgres on port 5433:
 
@@ -87,33 +87,29 @@ docker exec -i dms-postgres psql -U dms -d dms -v ON_ERROR_STOP=1 < apps/api/pri
 
 Delivery and driver lists are paged. The dashboard shows the oldest 40 pending stops and links to the full list. Driver ratings and active counts are aggregated in SQL, so a desk with thousands of deliveries and drivers does not load every row into the page.
 
-## Demo accounts
+## Admin account
 
-Password for every seeded account: `Admin123!`
+Sign-in uses a username and password for every role. A session lasts 12 hours and stays available in other browser tabs. Closing the browser does not sign the user out.
 
-Sign-in uses a username and password for every role. A session lasts 12 hours and stays available in other browser tabs. Closing the browser does not sign the user out. Seeded accounts are already set up, so they open straight away. An account an admin creates starts unfinished: the first sign-in asks for an email, a 6-digit code, and a new password before the desk opens. The code expires in 10 minutes. Customer sign-up asks for a username, email, and password. A 6-digit code confirms the email before the account opens. An admin creates a dispatcher or driver without an email.
+| Role | Username | Email | Name | Password |
+| --- | --- | --- | --- | --- |
+| Admin | admin | admin@dms.io | Alex Vance | Admin123! |
 
-Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` in `apps/api/.env` so messages are delivered. Until mail is configured, the code is shown on the form. Dispatchers are emailed when a delivery is waiting for a driver. The assigned driver is emailed when a dispatcher assigns the stop. The customer is emailed when the delivery arrives.
+The database has no other users, deliveries, or drivers. An account an admin creates starts unfinished: the first sign-in asks for an email, a 6-digit code, and a new password before the desk opens. The code expires in 10 minutes. Customer sign-up asks for a username, email, and password. A 6-digit code confirms the email before the account opens. An admin creates a dispatcher or driver without an email.
 
-| Role | Username | Email | Name |
-| --- | --- | --- | --- |
-| Admin | admin | admin@dms.io | Alex Vance |
-| Dispatcher | dispatcher1 | dispatch@dms.io | Marcus Brody |
-| Driver | driver_john | john.driver@dms.io | John Doe |
-| Customer | cust_alice | alice.smith@example.com | Alice Smith |
-| Customer | cust_bob | bob.jones@example.com | Bob Jones |
-| Customer | cust_charlie | charlie.brown@example.com | Charlie Brown |
+Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` in `apps/api/.env` so messages are delivered. Compose loads that file for the API. `DATABASE_URL` in the file is replaced inside Compose so the API still uses the Postgres service. Until `SMTP_HOST` is set, the code is shown on the form. Dispatchers are emailed when a delivery is waiting for a driver. The assigned driver is emailed when a dispatcher assigns the stop. The customer is emailed when the delivery arrives.
 
-`apps/api/scripts/set-demo-password.ts` rewrites only the `password` column so these accounts can sign in. It does not insert or delete rows.
+`apps/api/scripts/set-demo-password.ts` rewrites only the admin `password` column. It does not insert or delete rows.
 
 ## Jury walkthrough
 
-1. Sign in as `admin`. On the dashboard, open a pending delivery from the first table.
-2. Open Actions and switch the filter between customers, drivers, and dispatchers.
-3. Open Drivers and read the star rating. Open a delivery and assign an available driver.
-4. Sign in as that driver. Accept the job, then move it to picked up and in transit. Leave the failed-stop panel unused unless you intend to fail that delivery.
-5. Sign in as the customer on that delivery. Open Addresses, then open the delivery, confirm it with the code, and rate the driver.
-6. Sign back in as the admin. Reports shows the new counts. Download spreadsheet writes the visible status table.
+1. Sign in as `admin`. The dashboard is empty.
+2. Create a customer, a driver, and a dispatcher. The driver and dispatcher add an email and choose a password on their first sign-in.
+3. Sign in as the driver once, so the driver is available, then sign back in as `admin`.
+4. Create a delivery for the customer and assign that driver.
+5. Sign in as the driver. Accept the job, then move it to picked up and in transit.
+6. Sign in as the customer. Open the delivery, confirm it with the code, and rate the driver.
+7. Sign back in as `admin`. Reports shows the new counts. Download spreadsheet writes the visible status table.
 
 ## Database rules
 
